@@ -6,7 +6,7 @@ https://github.com/TheHolyRoger/ESP32-MQTT-AlarmKeypad
 
 More info & discussion: https://community.home-assistant.io/t/esp32-alarm-keypad/422952/2
 
-v0.05
+v0.06
 
   
   Author:

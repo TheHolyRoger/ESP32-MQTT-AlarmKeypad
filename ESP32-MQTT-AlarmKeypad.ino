@@ -31,36 +31,45 @@ static const std::string mqtt_main_topic = "esp32_alarm_keypad";   //  MQTT main
 
 /********** ADVANCED SETTINGS - ONLY NEED TO CHANGE IF YOU WANT TO TWEAK SETTINGS **********/
 
-static const char submit_key = '#';
-static const char clear_key = 'C';
-static const char clear_key_alt = 'B';
-static const char disarm_key = 'D';
-static const char ignoredKeySet[6] = { 'A' };
+#define ROW_NUM     4     // 4x4 keypad has four rows
+#define COLUMN_NUM  4     // 4x4 keypad has four columns
 
-#define ROW_NUM     4 // four rows
-#define COLUMN_NUM  4 // four columns
-static const char keys[ROW_NUM][COLUMN_NUM] = {
+static byte pin_rows[ROW_NUM]      = {26, 25, 33, 32};   // GPIO 26, GPIO 25, GPIO 33, GPIO 32 connect to the row pins
+static byte pin_column[COLUMN_NUM] = {13, 12, 14, 27};   // GPIO 13, GPIO 12, GPIO 14, GPIO 27 connect to the column pins
+
+static const bool allowZeroLengthDisarm = false;       // Allow submitting disarm service without any code entered.
+static const bool allowZeroLengthArm = true;           // Allow submitting arm service without any code entered.
+
+static const char submit_key = '#';                    // Key to press to ARM the alarm.
+static const char submit_key_alt = 'A';                // Key to press to ARM the alarm. (Alternate)
+static const char disarm_key = 'D';                    // Key to press to DISARM the alarm.
+static const char clear_key = 'C';                     // Key to press to clear the entered code.
+static const char clear_key_alt = 'B';                 // Key to press to clear the entered code.
+
+/* ESP32 LED Settings */
+#define LED_SUCCESS_PIN 15                           // GPIO 15 connects to the SUCCESS LED.
+#define LED_FAILURE_PIN 4                            // GPIO 4 connects to the FAILURE LED.
+#define LED_WARNING_PIN 18                           // GPIO 18 connects to the WARNING LED.
+#define LED_STATUS_PIN 19                            // GPIO 19 connects to the STATUS LED.
+#define LED_KEYPRESS_PIN 4                           // GPIO 4 connects to the KEYPRESS LED. (same as FAILURE)
+//#define LED_BUILTIN 2                              // If your board doesn't have a defined LED_BUILTIN, uncomment this line and replace 2 with the LED pin value
+#define LED_PIN LED_BUILTIN                          // If your board doesn't have a defined LED_BUILTIN (You will get a compile error), uncomment the line above
+
+static const char ignoredKeySet[6] = { '_' };          // Add any keys to be ignored.
+
+static const char keypad_map[ROW_NUM][COLUMN_NUM] = {
   {'1', '2', '3', 'A'},
   {'4', '5', '6', 'B'},
   {'7', '8', '9', 'C'},
   {'*', '0', '#', 'D'}
 };
 
-static byte pin_rows[ROW_NUM]      = {26, 25, 33, 32};   // GIOP26, GIOP25, GIOP33, GIOP32 connect to the row pins
-static byte pin_column[COLUMN_NUM] = {13, 12, 14, 27};   // GIOP13, GIOP12, GIOP14, GIOP27 connect to the column pins
-
-/* ESP32 LED Settings */
-//#define LED_BUILTIN 2                              // If your board doesn't have a defined LED_BUILTIN, uncomment this line and replace 2 with the LED pin value
-#define LED_PIN LED_BUILTIN                          // If your board doesn't have a defined LED_BUILTIN (You will get a compile error), uncomment the line above
-#define LED_SUCCESS_PIN 15
-#define LED_FAILURE_PIN 4
-#define LED_WARNING_PIN 18
-#define LED_STATUS_PIN 19
-#define LED_KEYPRESS_PIN 4
-
 static const bool ledHighEqualsON = true;            // ESP32 board LED ON=HIGH (Default). If your ESP32 LED is mostly ON instead of OFF, then set this value to false
 static const bool ledOnBootScan = true;              // Turn on LED during initial boot scan
 static const bool ledOnKeypress = true;               // Blink LED on keypresses.
+
+static const int minimumAlarmCodeLength = 4;
+static const int maximumAlarmCodeLength = 6;
 
 /* Webserver Settings */
 static const bool useLoginScreen = false;            //  use a basic login popup to avoid unwanted access
@@ -81,7 +90,7 @@ static const bool printSerialOutputForDebugging = false;  // Only set to true wh
 
 /* ANYTHING CHANGED BELOW THIS COMMENT MAY RESULT IN ISSUES - ALL SETTINGS TO CONFIGURE ARE ABOVE THIS LINE */
 
-static const String versionNum = "v0.05";
+static const String versionNum = "v0.06";
 
 /*
    Server Index Page
@@ -186,10 +195,10 @@ static const std::string alarmLightStatusTopic = ESPMQTTTopic + "/status_light/"
 static const std::string alarmLightWarningTopic = ESPMQTTTopic + "/warning_light/";
 static const std::string codeSuccessStdStr = ESPMQTTTopic + "/code_success";
 
-Keypad keypad = Keypad( makeKeymap(keys), pin_rows, pin_column, ROW_NUM, COLUMN_NUM );
+Keypad keypad = Keypad( makeKeymap(keypad_map), pin_rows, pin_column, ROW_NUM, COLUMN_NUM );
 
 static long lastOnlinePublished = 0;
-static const char specialKeySet[6] = {submit_key, clear_key, clear_key_alt, disarm_key};
+static const char specialKeySet[6] = {submit_key, submit_key_alt, clear_key, clear_key_alt, disarm_key};
 static const int specialKeyLength = sizeof(specialKeySet) / sizeof(specialKeySet[0]);
 static const int ignoredKeyLength = sizeof(ignoredKeySet) / sizeof(ignoredKeySet[0]);
 
@@ -481,15 +490,7 @@ void check_keypad () {
       Serial.println(String(alarmCode));
     }
 
-    if (key == submit_key || keypad.isPressed(submit_key)) {
-      if (printSerialOutputForDebugging) {
-        Serial.print("Submitting Arm Alarm Code: ");
-        Serial.println(String(alarmCode));
-      }
-      client.publish((ESPMQTTTopic + "/code_exit").c_str(), String(alarmCode));
-      strcpy(alarmCode, "");
-    }
-    else if (strlen(alarmCode) >= 4 && (key == disarm_key || keypad.isPressed(disarm_key))) {
+    if ((allowZeroLengthDisarm || strlen(alarmCode) >= minimumAlarmCodeLength) && (key == disarm_key || keypad.isPressed(disarm_key))) {
       if (printSerialOutputForDebugging) {
         Serial.print("Submitting Disarm Alarm Code: ");
         Serial.println(String(alarmCode));
@@ -504,7 +505,15 @@ void check_keypad () {
       }
       blinkLEDClear();
     }
-    else if (strlen(alarmCode) > 6) {
+    else if ((allowZeroLengthArm || strlen(alarmCode) >= minimumAlarmCodeLength) && key == submit_key || keypad.isPressed(submit_key) || key == submit_key_alt) {
+      if (printSerialOutputForDebugging) {
+        Serial.print("Submitting Arm Alarm Code: ");
+        Serial.println(String(alarmCode));
+      }
+      client.publish((ESPMQTTTopic + "/code_exit").c_str(), String(alarmCode));
+      strcpy(alarmCode, "");
+    }
+    else if (strlen(alarmCode) > maximumAlarmCodeLength) {
       strcpy(alarmCode, "");
     }
     delay(100);
