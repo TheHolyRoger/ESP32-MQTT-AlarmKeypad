@@ -55,6 +55,9 @@ static const char clear_key_alt = 'B';                 // Key to press to clear 
 //#define LED_BUILTIN 2                              // If your board doesn't have a defined LED_BUILTIN, uncomment this line and replace 2 with the LED pin value
 #define LED_PIN LED_BUILTIN                          // If your board doesn't have a defined LED_BUILTIN (You will get a compile error), uncomment the line above
 
+#define USE_EXTRA_FUNCTION_KEY 0                        // Change this to 1 to enable extra function key
+static const char extra_function_key = '_';             // Key to press to send extra function event
+
 static const char ignoredKeySet[6] = { '_' };          // Add any keys to be ignored.
 
 static const char keypad_map[ROW_NUM][COLUMN_NUM] = {
@@ -198,7 +201,13 @@ static const std::string codeSuccessStdStr = ESPMQTTTopic + "/code_success";
 Keypad keypad = Keypad( makeKeymap(keypad_map), pin_rows, pin_column, ROW_NUM, COLUMN_NUM );
 
 static long lastOnlinePublished = 0;
-static const char specialKeySet[6] = {submit_key, submit_key_alt, clear_key, clear_key_alt, disarm_key};
+#if USE_EXTRA_FUNCTION_KEY == 1
+  static const char specialKeySet[6] = {submit_key, submit_key_alt, clear_key, clear_key_alt, disarm_key, extra_function_key};
+  static const bool useExtraFunctionKey = true;
+#else
+  static const char specialKeySet[6] = {submit_key, submit_key_alt, clear_key, clear_key_alt, disarm_key};
+  static const bool useExtraFunctionKey = false;
+#endif
 static const int specialKeyLength = sizeof(specialKeySet) / sizeof(specialKeySet[0]);
 static const int ignoredKeyLength = sizeof(ignoredKeySet) / sizeof(ignoredKeySet[0]);
 
@@ -504,6 +513,12 @@ void check_keypad () {
         Serial.println("Clearing alarmCode.");
       }
       blinkLEDClear();
+    }
+    else if (useExtraFunctionKey && (key == extra_function_key || keypad.isPressed(extra_function_key))) {
+      if (printSerialOutputForDebugging) {
+        Serial.println("Submitting extra function event.");
+      }
+      client.publish((ESPMQTTTopic + "/extra_function").c_str(), "{\"extra_function\":\"called\"}");
     }
     else if ((allowZeroLengthArm || strlen(alarmCode) >= minimumAlarmCodeLength) && key == submit_key || keypad.isPressed(submit_key) || key == submit_key_alt) {
       if (printSerialOutputForDebugging) {
