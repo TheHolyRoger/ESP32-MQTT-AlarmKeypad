@@ -81,7 +81,7 @@ static const bool printSerialOutputForDebugging = false;  // Only set to true wh
 
 /* ANYTHING CHANGED BELOW THIS COMMENT MAY RESULT IN ISSUES - ALL SETTINGS TO CONFIGURE ARE ABOVE THIS LINE */
 
-static const String versionNum = "v0.04";
+static const String versionNum = "v0.05";
 
 /*
    Server Index Page
@@ -410,7 +410,7 @@ void blinkLEDClear() {
   }
 
   for (int i=0; i<2; ++i) {
-    flashColouredLEDWithDelay(LED_SUCCESS_PIN, 200, LED_FAILURE_PIN);
+    flashColouredLEDWithDelay(LED_SUCCESS_PIN, 50, LED_FAILURE_PIN);
     if (i < 1) {
       delay(50);
     }
@@ -481,7 +481,7 @@ void check_keypad () {
       Serial.println(String(alarmCode));
     }
 
-    if (key == submit_key) {
+    if (key == submit_key || keypad.isPressed(submit_key)) {
       if (printSerialOutputForDebugging) {
         Serial.print("Submitting Arm Alarm Code: ");
         Serial.println(String(alarmCode));
@@ -489,7 +489,7 @@ void check_keypad () {
       client.publish((ESPMQTTTopic + "/code_exit").c_str(), String(alarmCode));
       strcpy(alarmCode, "");
     }
-    else if (strlen(alarmCode) >= 4 && key == disarm_key) {
+    else if (strlen(alarmCode) >= 4 && (key == disarm_key || keypad.isPressed(disarm_key))) {
       if (printSerialOutputForDebugging) {
         Serial.print("Submitting Disarm Alarm Code: ");
         Serial.println(String(alarmCode));
@@ -497,7 +497,7 @@ void check_keypad () {
       client.publish((ESPMQTTTopic + "/code_entry").c_str(), String(alarmCode));
       strcpy(alarmCode, "");
     }
-    else if (key == clear_key || key == clear_key_alt) {
+    else if (key == clear_key || key == clear_key_alt || keypad.isPressed(clear_key) || keypad.isPressed(clear_key_alt)) {
       strcpy(alarmCode, "");
       if (printSerialOutputForDebugging) {
         Serial.println("Clearing alarmCode.");
@@ -507,7 +507,7 @@ void check_keypad () {
     else if (strlen(alarmCode) > 6) {
       strcpy(alarmCode, "");
     }
-    delay(200);
+    delay(100);
     if (!isIgnoredKey(key) && ledOnKeypress) {
       digitalWrite(LED_PIN, ledOFFValue);
       digitalWrite(LED_KEYPRESS_PIN, ledOFFValue);
