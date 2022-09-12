@@ -93,7 +93,7 @@ static const bool printSerialOutputForDebugging = false;  // Only set to true wh
 
 /* ANYTHING CHANGED BELOW THIS COMMENT MAY RESULT IN ISSUES - ALL SETTINGS TO CONFIGURE ARE ABOVE THIS LINE */
 
-static const String versionNum = "v0.06";
+static const String versionNum = "v0.07";
 
 /*
    Server Index Page
@@ -222,30 +222,64 @@ void publishLastwillOnline() {
   }
 }
 
+void publishHomeAssistantDiscoveryBase(String wifiMAC,
+                                       std::string mqtt_topic,
+                                       std::string entity_domain,
+                                       std::string entity_id,
+                                       std::string entity_friendly,
+                                       std::string unit_of_measure = "",
+                                       bool with_json = false,
+                                       bool with_command = false,
+                                       std::string entity_icon = "",
+                                       std::string state_topic = "state") {
+  std::string json_str = "";
+  std::string icon_str = "";
+  std::string unit_str = "}";
+  std::string cmd_str = "";
+  if (with_json) {
+    json_str = "\"json_attr_t\":\"~/json_attr\",";
+  }
+  if (entity_icon.size() > 0) {
+    icon_str = "\"icon\":\"" + entity_icon + "\",";
+  }
+  if (unit_of_measure.size() > 0) {
+    unit_str = "\"unit_of_meas\": \"" + unit_of_measure + "\"}";
+  }
+  else if (with_command) {
+    cmd_str = "\"cmd_t\": \"~/set\"";
+  }
+  client.publish((home_assistant_mqtt_prefix + "/" + entity_domain + "/" + host + "/" + entity_id + "/config").c_str(), ("{\"~\":\"" + mqtt_topic + "\"," +
+                 + "\"name\":\"" + friendly_name + " " + entity_friendly + "\"," +
+                 + "\"device\": {\"identifiers\":[\"espmqtt_" + host + "_" + wifiMAC.c_str() + "\"],\"manufacturer\":\"" + manufacturer + "\",\"model\":\"" + "ESP32" + "\",\"name\": \"" + friendly_name + "\" }," +
+                 + "\"avty_t\": \"" + lastWill + "\"," +
+                 + "\"uniq_id\":\"espmqtt_" + host + "_" + wifiMAC.c_str() + "_" + entity_id + "\"," +
+                 + "\"stat_t\":\"~/" + state_topic + "\"," + json_str + icon_str + cmd_str + unit_str).c_str(), true);
+}
+
+void publishHomeAssistantDiscoverySensorLinkQuality(String wifiMAC) {
+  publishHomeAssistantDiscoveryBase(wifiMAC, esp32Topic, "sensor", "linkquality", "Linkquality", "rssi", false, false, "mdi:signal", "rssi"); 
+}
+
+void publishHomeAssistantDiscoverySensor(String wifiMAC,
+                                         std::string sensor_id,
+                                         std::string sensor_friendly,
+                                         std::string unit_of_measure,
+                                         bool with_json = false) {
+  publishHomeAssistantDiscoveryBase(wifiMAC, (ESPMQTTTopic + "/" + sensor_id + "/"), "sensor", sensor_id, sensor_friendly, unit_of_measure, with_json);
+}
+
+void publishHomeAssistantDiscoveryLight(String wifiMAC,
+                                        std::string mqtt_topic,
+                                        std::string light_id,
+                                        std::string light_friendly) {
+  publishHomeAssistantDiscoveryBase(wifiMAC, mqtt_topic, "light", light_id, light_friendly, "", false, true);
+}
+
 void publishHomeAssistantDiscoveryESPConfig() {
   String wifiMAC = String(WiFi.macAddress());
-  client.publish((home_assistant_mqtt_prefix + "/sensor/" + host + "/linkquality/config").c_str(), ("{\"~\":\"" + esp32Topic + "\"," +
-                 + "\"name\":\"" + friendly_name + " Linkquality\"," +
-                 + "\"device\": {\"identifiers\":[\"espmqtt_" + host + "_" + wifiMAC.c_str() + "\"],\"manufacturer\":\"" + manufacturer + "\",\"model\":\"" + "ESP32" + "\",\"name\": \"" + friendly_name + "\" }," +
-                 + "\"avty_t\": \"" + lastWill + "\"," +
-                 + "\"uniq_id\":\"espmqtt_" + host + "_" + wifiMAC.c_str() + "_linkquality\"," +
-                 + "\"stat_t\":\"~/rssi\"," +
-                 + "\"icon\":\"mdi:signal\"," +
-                 + "\"unit_of_meas\": \"rssi\"}").c_str(), true);
-  client.publish((home_assistant_mqtt_prefix + "/light/" + host + "/status_light/config").c_str(), ("{\"~\":\"" + (alarmLightStatusTopic) + "\"," +
-                 + "\"name\":\"" + friendly_name + " Status Light\"," +
-                 + "\"device\": {\"identifiers\":[\"espmqtt_" + host + "_" + wifiMAC.c_str() + "\"],\"manufacturer\":\"" + manufacturer + "\",\"model\":\"" + "ESP32" + "\",\"name\": \"" + friendly_name + "\" }," +
-                 + "\"avty_t\": \"" + lastWill + "\"," +
-                 + "\"uniq_id\":\"espmqtt_" + host + "_" + wifiMAC.c_str() + "_status_light\"," +
-                 + "\"stat_t\":\"~/state\"," +
-                 + "\"cmd_t\": \"~/set\" }").c_str(), true);
-  client.publish((home_assistant_mqtt_prefix + "/light/" + host + "/warning_light/config").c_str(), ("{\"~\":\"" + (alarmLightWarningTopic) + "\"," +
-                 + "\"name\":\"" + friendly_name + " Warning Light\"," +
-                 + "\"device\": {\"identifiers\":[\"espmqtt_" + host + "_" + wifiMAC.c_str() + "\"],\"manufacturer\":\"" + manufacturer + "\",\"model\":\"" + "ESP32" + "\",\"name\": \"" + friendly_name + "\" }," +
-                 + "\"avty_t\": \"" + lastWill + "\"," +
-                 + "\"uniq_id\":\"espmqtt_" + host + "_" + wifiMAC.c_str() + "_warning_light\"," +
-                 + "\"stat_t\":\"~/state\"," +
-                 + "\"cmd_t\": \"~/set\" }").c_str(), true);
+  publishHomeAssistantDiscoverySensorLinkQuality(wifiMAC);
+  publishHomeAssistantDiscoveryLight(wifiMAC, alarmLightStatusTopic, "status_light", "Status Light");
+  publishHomeAssistantDiscoveryLight(wifiMAC, alarmLightWarningTopic, "warning_light", "Warning Light");
 }
 
 void publishHomeAssistantAdvertisements() {
