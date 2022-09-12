@@ -28,6 +28,9 @@ static const char* mqtt_pass = "password";                         //  MQTT Brok
 static const int mqtt_port = 1883;                                 //  MQTT Port
 static const std::string mqtt_main_topic = "esp32_alarm_keypad";   //  MQTT main topic
 
+/* Alarm Settings */
+static const bool autoDisarmAfterDigits = 0;
+
 
 /********** ADVANCED SETTINGS - ONLY NEED TO CHANGE IF YOU WANT TO TWEAK SETTINGS **********/
 
@@ -197,6 +200,7 @@ static const char* lastWill = lastWillStr.c_str();
 static const std::string alarmLightStatusTopic = ESPMQTTTopic + "/status_light/";
 static const std::string alarmLightWarningTopic = ESPMQTTTopic + "/warning_light/";
 static const std::string codeSuccessStdStr = ESPMQTTTopic + "/code_success";
+static bool alarmIsArmed = false;
 
 Keypad keypad = Keypad( makeKeymap(keypad_map), pin_rows, pin_column, ROW_NUM, COLUMN_NUM );
 
@@ -514,6 +518,10 @@ boolean isIgnoredKey(char key)
   return false;
 }
 
+boolean shouldDisarm(char key) {
+  (key == disarm_key || keypad.isPressed(disarm_key) || (alarmIsArmed && autoDisarmAfterDigits > 0 && autoDisarmAfterDigits == strlen(alarmCode)));
+}
+
 void check_keypad () {
   char key = keypad.getKey();
   if (key) {
@@ -533,7 +541,7 @@ void check_keypad () {
       Serial.println(String(alarmCode));
     }
 
-    if ((allowZeroLengthDisarm || strlen(alarmCode) >= minimumAlarmCodeLength) && (key == disarm_key || keypad.isPressed(disarm_key))) {
+    if ((allowZeroLengthDisarm || strlen(alarmCode) >= minimumAlarmCodeLength) && shouldDisarm(key)) {
       if (printSerialOutputForDebugging) {
         Serial.print("Submitting Disarm Alarm Code: ");
         Serial.println(String(alarmCode));
@@ -681,9 +689,11 @@ void onConnectionEstablished() {
     std::string deviceStateTopic = alarmLightStatusTopic + "/state";
 
     if ((strcmp(payload.c_str(), OFF_STR) == 0)) {
+      alarmIsArmed = false;
       digitalWrite(LED_STATUS_PIN, ledOFFValue);
       client.publish(deviceStateTopic.c_str(), OFF_STR, true);
     } else if ((strcmp(payload.c_str(), ON_STR) == 0)) {
+      alarmIsArmed = true;
       digitalWrite(LED_STATUS_PIN, ledONValue);
       client.publish(deviceStateTopic.c_str(), ON_STR, true);
     }
