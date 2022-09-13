@@ -9,6 +9,7 @@
 #include <ESPmDNS.h>
 #include <Update.h>
 #include <Keypad.h>
+#include <ArduinoQueue.h>
 
 /****************** CONFIGURATIONS TO CHANGE *******************/
 
@@ -215,13 +216,61 @@ static long lastOnlinePublished = 0;
 static const int specialKeyLength = sizeof(specialKeySet) / sizeof(specialKeySet[0]);
 static const int ignoredKeyLength = sizeof(ignoredKeySet) / sizeof(ignoredKeySet[0]);
 
+struct QueuePublish {
+  std::string topic;
+  String payload;
+  char * aBuffer;
+  bool retain;
+};
+
+static const int publishQueueSize = 300;
+
+ArduinoQueue<QueuePublish> publishQueue(publishQueueSize);
+
+void addToPublish(std::string aTopic, String aPayload, bool retain = false) {
+  bool queueIsFull = publishQueue.isFull();
+  if (!queueIsFull) {
+    struct QueuePublish aPublish;
+    aPublish.payload = aPayload;
+    aPublish.topic = aTopic;
+    aPublish.retain = retain;
+    publishQueue.enqueue(aPublish);
+  }
+}
+
+bool publishMQTT(QueuePublish aCommand) {
+  if (client.isConnected()) {
+    client.publish(aCommand.topic.c_str(), aCommand.payload.c_str(), aCommand.retain);
+    return true;
+  }
+  return false;
+}
+
+void publishAllMQTT() {
+  int attempts = 0;
+  while (!(publishQueue.isEmpty()) && attempts < 3) {
+    if (!(client.isConnected())) {
+      client.loop();
+    }
+    else {
+      attempts++;
+    }
+    bool success = false;
+    QueuePublish aCommand = publishQueue.getHead();
+    success = publishMQTT(aCommand);
+    if (success) {
+      publishQueue.dequeue();
+    }
+  }
+}
+
 void publishLastwillOnline() {
   if ((millis() - lastOnlinePublished) > 30000) {
     if (client.isConnected()) {
-      client.publish(lastWill, "online", true);
+      addToPublish(lastWill, "online", true);
       lastOnlinePublished = millis();
       String rssi = String(WiFi.RSSI());
-      client.publish(rssiStdStr.c_str(), rssi.c_str());
+      addToPublish(rssiStdStr.c_str(), rssi);
     }
   }
 }
@@ -252,12 +301,12 @@ void publishHomeAssistantDiscoveryBase(String wifiMAC,
   else if (with_command) {
     cmd_str = "\"cmd_t\": \"~/set\"";
   }
-  client.publish((home_assistant_mqtt_prefix + "/" + entity_domain + "/" + host + "/" + entity_id + "/config").c_str(), ("{\"~\":\"" + mqtt_topic + "\"," +
-                 + "\"name\":\"" + friendly_name + " " + entity_friendly + "\"," +
-                 + "\"device\": {\"identifiers\":[\"espmqtt_" + host + "_" + wifiMAC.c_str() + "\"],\"manufacturer\":\"" + manufacturer + "\",\"model\":\"" + "ESP32" + "\",\"name\": \"" + friendly_name + "\" }," +
-                 + "\"avty_t\": \"" + lastWill + "\"," +
-                 + "\"uniq_id\":\"espmqtt_" + host + "_" + wifiMAC.c_str() + "_" + entity_id + "\"," +
-                 + "\"stat_t\":\"~/" + state_topic + "\"," + json_str + icon_str + cmd_str + unit_str).c_str(), true);
+  addToPublish((home_assistant_mqtt_prefix + "/" + entity_domain + "/" + host + "/" + entity_id + "/config").c_str(), ("{\"~\":\"" + mqtt_topic + "\"," +
+               + "\"name\":\"" + friendly_name + " " + entity_friendly + "\"," +
+               + "\"device\": {\"identifiers\":[\"espmqtt_" + host + "_" + wifiMAC.c_str() + "\"],\"manufacturer\":\"" + manufacturer + "\",\"model\":\"" + "ESP32" + "\",\"name\": \"" + friendly_name + "\" }," +
+               + "\"avty_t\": \"" + lastWill + "\"," +
+               + "\"uniq_id\":\"espmqtt_" + host + "_" + wifiMAC.c_str() + "_" + entity_id + "\"," +
+               + "\"stat_t\":\"~/" + state_topic + "\"," + json_str + icon_str + cmd_str + unit_str).c_str(), true);
 }
 
 void publishHomeAssistantDiscoverySensorLinkQuality(String wifiMAC) {
@@ -288,8 +337,8 @@ void publishHomeAssistantDiscoveryESPConfig() {
 
 void publishHomeAssistantAdvertisements() {
   
-  client.publish((alarmLightStatusTopic + "/state").c_str(), OFF_STR, true);
-  client.publish((alarmLightWarningTopic + "/state").c_str(), OFF_STR, true);
+  addToPublish((alarmLightStatusTopic + "/state").c_str(), OFF_STR, true);
+  addToPublish((alarmLightWarningTopic + "/state").c_str(), OFF_STR, true);
 }
 
 void setup () {
@@ -546,7 +595,7 @@ void check_keypad () {
         Serial.print("Submitting Disarm Alarm Code: ");
         Serial.println(String(alarmCode));
       }
-      client.publish((ESPMQTTTopic + "/code_entry").c_str(), String(alarmCode));
+      addToPublish((ESPMQTTTopic + "/code_entry").c_str(), String(alarmCode));
       strcpy(alarmCode, "");
     }
     else if (key == clear_key || key == clear_key_alt || keypad.isPressed(clear_key) || keypad.isPressed(clear_key_alt)) {
@@ -560,14 +609,14 @@ void check_keypad () {
       if (printSerialOutputForDebugging) {
         Serial.println("Submitting extra function event.");
       }
-      client.publish((ESPMQTTTopic + "/extra_function").c_str(), "{\"extra_function\":\"called\"}");
+      addToPublish((ESPMQTTTopic + "/extra_function").c_str(), "{\"extra_function\":\"called\"}");
     }
     else if ((allowZeroLengthArm || strlen(alarmCode) >= minimumAlarmCodeLength) && key == submit_key || keypad.isPressed(submit_key) || key == submit_key_alt) {
       if (printSerialOutputForDebugging) {
         Serial.print("Submitting Arm Alarm Code: ");
         Serial.println(String(alarmCode));
       }
-      client.publish((ESPMQTTTopic + "/code_exit").c_str(), String(alarmCode));
+      addToPublish((ESPMQTTTopic + "/code_exit").c_str(), String(alarmCode));
       strcpy(alarmCode, "");
     }
     else if (strlen(alarmCode) > maximumAlarmCodeLength) {
@@ -586,6 +635,7 @@ void loop () {
   server.handleClient();
   client.loop();
   publishLastwillOnline();
+  publishAllMQTT();
 
   if (waitForRetained && client.isConnected()) {
     if (retainStartTime == 0) {
@@ -621,7 +671,7 @@ void codeSuccess(std::string payload) {
     StaticJsonDocument<100> docOut;
     docOut["status"] = "errorParsingJSON";
     serializeJson(docOut, aBuffer);
-    client.publish(ESPMQTTTopic.c_str(), aBuffer);
+    addToPublish(ESPMQTTTopic.c_str(), aBuffer);
   }
   else {
     const bool successValid = docIn["success"];
@@ -639,7 +689,7 @@ void codeSuccess(std::string payload) {
       if (printSerialOutputForDebugging) {
         Serial.println("Code was successful.");
       }
-      client.publish(ESPMQTTTopic.c_str(), aBuffer);
+      addToPublish(ESPMQTTTopic.c_str(), aBuffer);
       blinkColouredLEDSuccess();
     } else {
       StaticJsonDocument<100> docOut;
@@ -648,7 +698,7 @@ void codeSuccess(std::string payload) {
       if (printSerialOutputForDebugging) {
         Serial.println("Code was unsuccessful.");
       }
-      client.publish(ESPMQTTTopic.c_str(), aBuffer);
+      addToPublish(ESPMQTTTopic.c_str(), aBuffer);
       blinkLEDFail();
     }
   }
@@ -691,11 +741,11 @@ void onConnectionEstablished() {
     if ((strcmp(payload.c_str(), OFF_STR) == 0)) {
       alarmIsArmed = false;
       digitalWrite(LED_STATUS_PIN, ledOFFValue);
-      client.publish(deviceStateTopic.c_str(), OFF_STR, true);
+      addToPublish(deviceStateTopic.c_str(), OFF_STR, true);
     } else if ((strcmp(payload.c_str(), ON_STR) == 0)) {
       alarmIsArmed = true;
       digitalWrite(LED_STATUS_PIN, ledONValue);
-      client.publish(deviceStateTopic.c_str(), ON_STR, true);
+      addToPublish(deviceStateTopic.c_str(), ON_STR, true);
     }
   });
 
@@ -708,10 +758,10 @@ void onConnectionEstablished() {
 
     if ((strcmp(payload.c_str(), OFF_STR) == 0)) {
       digitalWrite(LED_WARNING_PIN, ledOFFValue);
-      client.publish(deviceStateTopic.c_str(), OFF_STR, true);
+      addToPublish(deviceStateTopic.c_str(), OFF_STR, true);
     } else if ((strcmp(payload.c_str(), ON_STR) == 0)) {
       digitalWrite(LED_WARNING_PIN, ledONValue);
-      client.publish(deviceStateTopic.c_str(), ON_STR, true);
+      addToPublish(deviceStateTopic.c_str(), ON_STR, true);
     }
   });
 
