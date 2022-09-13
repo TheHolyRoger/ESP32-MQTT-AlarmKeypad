@@ -30,7 +30,7 @@ static const int mqtt_port = 1883;                                 //  MQTT Port
 static const std::string mqtt_main_topic = "esp32_alarm_keypad";   //  MQTT main topic
 
 /* Alarm Settings */
-static const bool autoDisarmAfterDigits = 0;
+static const int autoDisarmAfterDigits = 0;
 
 
 /********** ADVANCED SETTINGS - ONLY NEED TO CHANGE IF YOU WANT TO TWEAK SETTINGS **********/
@@ -653,7 +653,7 @@ boolean isIgnoredKey(char key)
 }
 
 boolean shouldDisarm(char key) {
-  (key == disarm_key || keypad.isPressed(disarm_key) || (alarmIsArmed && autoDisarmAfterDigits > 0 && autoDisarmAfterDigits == strlen(alarmCode)));
+  return (key == disarm_key || keypad.isPressed(disarm_key) || (alarmIsArmed && autoDisarmAfterDigits > 0 && autoDisarmAfterDigits == strlen(alarmCode)));
 }
 
 void check_keypad () {
