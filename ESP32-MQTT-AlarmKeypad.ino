@@ -93,6 +93,11 @@ static const int waitForMQTTRetainMessages = 10;      // Only for bots in simula
 
 static const bool printSerialOutputForDebugging = false;  // Only set to true when you want to debug an issue from Arduino IDE. Lots of Serial output from scanning can crash the ESP32
 
+/* Polling Settings */
+static const int LOOP_INTERVAL_MS = 10;
+static const int sensorUpdateInterval = 10000;
+#define ENABLE_BLUETOOTH_MAC_PUBLISH 0
+
 /*************************************************************/
 
 /* ANYTHING CHANGED BELOW THIS COMMENT MAY RESULT IN ISSUES - ALL SETTINGS TO CONFIGURE ARE ABOVE THIS LINE */
@@ -184,20 +189,29 @@ static const std::string manufacturer = "Roger Alarm Co";
 
 static int ledONValue = HIGH;
 static int ledOFFValue = LOW;
+static bool deviceHasFinishedBooting = false;
 static bool deviceHasBooted = false;
 static bool deviceFirstAdvertisementsSent = false;
 static char alarmCode[6];
 //static bool waitForDeviceCreation = false;
-static char aBuffer[200];
+static char aBuffer[1000];
 static const std::string ON_STRING = "ON";
 static const char* ON_STR = ON_STRING.c_str();
 static const std::string OFF_STRING = "OFF";
 static const char* OFF_STR = OFF_STRING.c_str();
+static const std::string UNIT_HOURS = "hours";
+static const std::string STR_ZERO = "0.00";
+static const char* CHAR_ZERO = STR_ZERO.c_str();
+
+static long previousSensorUpdate = sensorUpdateInterval;
+
 static const std::string ESPMQTTTopic = mqtt_main_topic + "/" + std::string(host);
 static const std::string esp32Topic = ESPMQTTTopic + "/esp32";
 static const std::string rssiStdStr = esp32Topic + "/rssi";
 static const std::string lastWillStr = ESPMQTTTopic + "/lastwill";
 static const char* lastWill = lastWillStr.c_str();
+static const std::string sensor_friendly_system_info = "System Uptime";
+static const std::string sensor_id_system_info = "system_uptime";
 static const std::string alarmLightStatusTopic = ESPMQTTTopic + "/status_light/";
 static const std::string alarmLightWarningTopic = ESPMQTTTopic + "/warning_light/";
 static const std::string codeSuccessStdStr = ESPMQTTTopic + "/code_success";
@@ -215,6 +229,11 @@ static long lastOnlinePublished = 0;
 #endif
 static const int specialKeyLength = sizeof(specialKeySet) / sizeof(specialKeySet[0]);
 static const int ignoredKeyLength = sizeof(ignoredKeySet) / sizeof(ignoredKeySet[0]);
+
+#if ENABLE_BLUETOOTH_MAC_PUBLISH == 1
+  #include <NimBLEDevice.h>
+  static std::string bluetooth_mac_address = "";
+#endif
 
 struct QueuePublish {
   std::string topic;
@@ -331,15 +350,46 @@ void publishHomeAssistantDiscoveryLight(String wifiMAC,
 void publishHomeAssistantDiscoveryESPConfig() {
   String wifiMAC = String(WiFi.macAddress());
   publishHomeAssistantDiscoverySensorLinkQuality(wifiMAC);
+  publishHomeAssistantDiscoverySensor(wifiMAC, sensor_id_system_info, sensor_friendly_system_info, UNIT_HOURS, true);
   publishHomeAssistantDiscoveryLight(wifiMAC, alarmLightStatusTopic, "status_light", "Status Light");
   publishHomeAssistantDiscoveryLight(wifiMAC, alarmLightWarningTopic, "warning_light", "Warning Light");
+}
+
+void publishSensorUpdate(std::string sensor_id, String value = CHAR_ZERO) {
+  addToPublish((ESPMQTTTopic + "/" + sensor_id + "//state").c_str(), value, true);
+}
+
+void publishSensorAttrUpdate(std::string sensor_id, String value) {
+  addToPublish((ESPMQTTTopic + "/" + sensor_id + "//json_attr").c_str(), value, true);
 }
 
 void publishHomeAssistantAdvertisements() {
   
   addToPublish((alarmLightStatusTopic + "/state").c_str(), OFF_STR, true);
   addToPublish((alarmLightWarningTopic + "/state").c_str(), OFF_STR, true);
+  publishSensorUpdate(sensor_id_system_info);
 }
+
+#if ENABLE_BLUETOOTH_MAC_PUBLISH == 1
+
+  void deinit_bluetooth() {
+    NimBLEDevice::deinit(true);
+  }
+
+  void init_bluetooth() {
+    if (printSerialOutputForDebugging) {
+      Serial.println("Starting NimBLE Client");
+    }
+
+    NimBLEDevice::init("");
+    if (printSerialOutputForDebugging) {
+      Serial.print("Bluetooth MAC: ");
+      Serial.println(NimBLEDevice::getAddress().toString().c_str());
+    }
+    bluetooth_mac_address = NimBLEDevice::getAddress().toString();
+  }
+
+#endif
 
 void setup () {
   if (ledHighEqualsON) {
@@ -445,10 +495,45 @@ void setup () {
   client.setKeepAlive(60);
   client.setMaxPacketSize(mqtt_packet_size);
 
+  #if ENABLE_BLUETOOTH_MAC_PUBLISH == 1
+    init_bluetooth();
+    deinit_bluetooth();
+  #endif
+
   Serial.println("Alarm Keypad ESP32 starting...");
   if (!printSerialOutputForDebugging) {
     Serial.println("Set printSerialOutputForDebugging = true to see more Serial output");
   }
+}
+
+void system_info_poll () {
+  StaticJsonDocument<1000> doc;
+
+  int uptime_seconds = (int)(millis() / 1000);
+  float uptime_minutes = (uptime_seconds / 60);
+  float uptime_hours = (uptime_minutes / 60);
+
+  char hours_str[64];
+  dtostrf(uptime_hours, 3, 2, hours_str);
+
+  publishSensorUpdate(sensor_id_system_info, hours_str);
+
+  #if ENABLE_BLUETOOTH_MAC_PUBLISH == 1
+    if (bluetooth_mac_address.size()) {
+      doc["bluetooth_mac_address"] = bluetooth_mac_address;
+    }
+  #endif
+
+  doc["alarm_is_armed"] = alarmIsArmed;
+
+  serializeJson(doc, aBuffer);
+
+  if (printSerialOutputForDebugging) {
+    Serial.print("Info payload: ");
+    Serial.println(aBuffer);
+  }
+
+  publishSensorAttrUpdate(sensor_id_system_info, aBuffer);
 }
 
 void flashColouredLEDWithDelay(int PinLED, int onDelay, int PinLEDSecondary = 0) {
@@ -631,7 +716,7 @@ void check_keypad () {
 }
 
 void loop () {
-  vTaskDelay(10 / portTICK_PERIOD_MS);
+  vTaskDelay(LOOP_INTERVAL_MS / portTICK_PERIOD_MS);
   server.handleClient();
   client.loop();
   publishLastwillOnline();
@@ -653,6 +738,12 @@ void loop () {
     }
 
     check_keypad();
+
+    if (deviceHasFinishedBooting && (millis() - previousSensorUpdate) >= sensorUpdateInterval) {
+      previousSensorUpdate = millis();
+
+      system_info_poll();
+    }
   }
 }
 
@@ -779,5 +870,8 @@ void onConnectionEstablished() {
   if (!deviceFirstAdvertisementsSent) {
     deviceFirstAdvertisementsSent = true;
     publishHomeAssistantAdvertisements();
+  }
+  if (!deviceHasFinishedBooting) {
+    deviceHasFinishedBooting = true;
   }
 }
